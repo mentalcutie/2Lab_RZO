@@ -1,79 +1,61 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 
-using namespace cv;
-using namespace std;
-
 int main() {
-    // 1. Загрузка изображения
-    Mat originalImage = imread("Testimg.jpg");
-
-    if (originalImage.empty()) {
-        cout << "Ошибка: не удалось загрузить изображение! Проверьте путь к файлу." << endl;
+    // Загрузка изображения
+    cv::Mat src = cv::imread("shapes.jpg");
+    if (src.empty()) {
+        std::cerr << "Ошибка загрузки изображения!" << std::endl;
         return -1;
     }
 
-    imshow("Original Image", originalImage);
+    // Преобразование в оттенки серого
+    cv::Mat gray;
+    cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
 
-    // 2. Переход в различные цветовые пространства
-    Mat hsvImage, labImage, yuvImage, xyzImage, grayImage;
+    // Усиленное сглаживание
+    cv::Mat blurred;
+    cv::GaussianBlur(gray, blurred, cv::Size(1, 1), 2.0);
 
-    cvtColor(originalImage, hsvImage, COLOR_BGR2HSV);
-    cvtColor(originalImage, labImage, COLOR_BGR2Lab);
-    cvtColor(originalImage, yuvImage, COLOR_BGR2YUV);
-    cvtColor(originalImage, xyzImage, COLOR_BGR2XYZ);
-    cvtColor(originalImage, grayImage, COLOR_BGR2GRAY);
+    // Обнаружение краёв
+    cv::Mat edges;
+    cv::Canny(blurred, edges, 20, 120);
 
-    // Вывод результатов цветовых пространств
-    imshow("HSV Image", hsvImage);
-    imshow("Lab Image", labImage);
-    imshow("YUV Image", yuvImage);
-    imshow("XYZ Image", xyzImage);
-    imshow("Gray Image", grayImage);
+    // Морфологическое закрытие для сглаживания
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
 
-    // 3. Преобразование в оттенки серого и применение фильтра Гаусса
-    Mat blurredImage;
-    GaussianBlur(grayImage, blurredImage, Size(5, 5), 0);
-    imshow("Blurred Image", blurredImage);
+    // Поиск контуров
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(edges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    // 4. Обнаружение линий с помощью HoughLines
-    Mat edges;
-    Canny(blurredImage, edges, 50, 150); // Детекция краев
+    // Создание выходного изображения
+    cv::Mat output = cv::Mat::zeros(src.size(), src.type());
 
-    vector<Vec2f> lines;
-    HoughLines(edges, lines, 1, CV_PI / 180, 100);
+    // Обработка контуров
+    for (size_t i = 0; i < contours.size(); i++) {
+        double area = cv::contourArea(contours[i]);
+        if (area > 200) { // Фильтрация мелких шумов
+            std::vector<cv::Point> approx;
+            cv::approxPolyDP(contours[i], approx, 0.02 * cv::arcLength(contours[i], true), true);
 
-    Mat houghLinesImage = originalImage.clone();
-    for (size_t i = 0; i < lines.size(); i++) {
-        float rho = lines[i][0];
-        float theta = lines[i][1];
-        Point pt1, pt2;
-        double a = cos(theta), b = sin(theta);
-        double x0 = a * rho, y0 = b * rho;
-        pt1.x = cvRound(x0 + 1000 * (-b));
-        pt1.y = cvRound(y0 + 1000 * (a));
-        pt2.x = cvRound(x0 - 1000 * (-b));
-        pt2.y = cvRound(y0 - 1000 * (a));
-        line(houghLinesImage, pt1, pt2, Scalar(0, 0, 255), 2); // Красные линии
+            std::string shapeName;
+            if (approx.size() == 3) shapeName = "triangle";
+            else if (approx.size() == 4) shapeName = "square";
+            else if (approx.size() > 4) shapeName = "circle";
+            else continue;
+
+            cv::Moments m = cv::moments(contours[i]);
+            cv::Point center(m.m10 / m.m00, m.m01 / m.m00);
+
+            cv::drawContours(output, contours, (int)i, cv::Scalar(255, 0, 0), 2);
+            cv::putText(output, shapeName, center - cv::Point(20, -10),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+        }
     }
-    imshow("Hough Lines", houghLinesImage);
 
-    // 5. Обнаружение окружностей с помощью HoughCircles
-    vector<Vec3f> circles;
-    HoughCircles(blurredImage, circles, HOUGH_GRADIENT, 1,
-        blurredImage.rows / 16, 100, 30, 1, 100);
-
-    Mat houghCirclesImage = originalImage.clone();
-    for (size_t i = 0; i < circles.size(); i++) {
-        Vec3i c = circles[i];
-        Point center = Point(c[0], c[1]);
-        int radius = c[2];
-        circle(houghCirclesImage, center, radius, Scalar(0, 255, 0), 2); // Зеленые окружности
-        circle(houghCirclesImage, center, 2, Scalar(0, 255, 0), 3); // Центр окружности
-    }
-    imshow("Hough Circles", houghCirclesImage);
-
-    // Ожидание нажатия клавиши для закрытия окон
-    waitKey(0);
+    // Показ результата
+    cv::imshow("Contours", output);
+    cv::waitKey(0);
     return 0;
 }
